@@ -27,7 +27,8 @@ class Settings:
     
     # CORS Settings - Simple parsing
     ALLOWED_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:3001", "https://your-app.vercel.app"]
-    ALLOWED_HOSTS: List[str] = ["localhost", "127.0.0.1", "your-api.railway.app"]
+    #ALLOWED_HOSTS: List[str] = ["localhost", "127.0.0.1", "your-api.railway.app"]
+    ALLOWED_HOSTS: List[str] = ["*"]
     
     # Rate Limiting
     RATE_LIMIT_PER_MINUTE: int = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))
