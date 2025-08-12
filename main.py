@@ -183,10 +183,11 @@ app.include_router(
 
 # Development server configuration
 if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 8000))  # Use Railway's port or fallback to 8000 locally
     uvicorn.run(
         "main:app",
         host="0.0.0.0",
-        port=8000,
+        port=port,
         reload=settings.DEBUG,  # Auto-reload in development
         log_level="info"
     )
