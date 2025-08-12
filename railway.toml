@@ -6,7 +6,7 @@ buildCommand = "pip install -r requirements.txt"
 startCommand = "uvicorn main:app --host 0.0.0.0 --port $PORT"
 
 [env]
-GROQ_API_KEY = "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"
+GROQ_API_KEY = "${{GROQ_API_KEY}}"
 GROQ_MODEL = "llama3-70b-8192"
 ENVIRONMENT = "production"
 DEBUG = "false"
