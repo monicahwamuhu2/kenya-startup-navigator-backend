@@ -26,8 +26,17 @@ class Settings:
     GROQ_TEMPERATURE: float = float(os.getenv("GROQ_TEMPERATURE", "0.7"))
     
     # CORS Settings - Simple parsing
-    ALLOWED_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:3001", "https://your-app.vercel.app"]
+    #ALLOWED_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:3001", "https://your-app.vercel.app"]
     #ALLOWED_HOSTS: List[str] = ["localhost", "127.0.0.1", "your-api.railway.app"]
+    #ALLOWED_HOSTS: List[str] = ["*"]
+
+    ALLOWED_ORIGINS: List[str] = [
+        "http://localhost:3000", 
+        "http://localhost:3001", 
+        "https://your-app.vercel.app",
+        "https://*.railway.app",
+        "*"  # Allow all for Railway deployment
+    ]
     ALLOWED_HOSTS: List[str] = ["*"]
     
     # Rate Limiting
