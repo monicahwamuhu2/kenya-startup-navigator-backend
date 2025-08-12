@@ -1,199 +1,263 @@
-import os
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.middleware.trustedhost import TrustedHostMiddleware
-from fastapi.responses import JSONResponse
-import uvicorn
-import logging
-from contextlib import asynccontextmanager
+from pydantic import BaseModel
+import httpx
+import json
+import os
+from typing import List, Optional
+import time
 
-# Import custom modules
-from app.api.routes import router as api_router
-from app.core.config import settings
-from app.core.dependencies import get_current_timestamp
+# Environment variables
+GROQ_API_KEY = "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"
+GROQ_MODEL = "llama3-70b-8192"
 
-# Configure logging for production-ready error tracking
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """
-    Application lifespan manager - handles startup and shutdown events
-    This is where you'd initialize databases, cache connections, etc.
-    """
-    # Startup
-    logger.info("🚀 Kenya Startup Navigator API starting up...")
-    logger.info(f"Environment: {settings.ENVIRONMENT}")
-    logger.info(f"Debug mode: {settings.DEBUG}")
-    
-    yield  # Application runs here
-    
-    # Shutdown
-    logger.info("🛑 Kenya Startup Navigator API shutting down...")
-
-
-# Create FastAPI application with comprehensive metadata
 app = FastAPI(
-    title="Kenya Startup Ecosystem Navigator API",
-    description="""
-    🚀 **Intelligent Q&A System for Kenya's Startup Ecosystem**
-    
-    This API provides AI-powered insights and guidance for entrepreneurs navigating
-    Kenya's startup landscape. Features include:
-    
-    - **Smart Query Processing**: AI-powered responses to ecosystem questions
-    - **Investor Matching**: Intelligent matching between startups and funding sources
-    - **Ecosystem Intelligence**: Comprehensive database of Kenya's startup resources
-    - **Personalized Guidance**: Tailored advice based on startup profiles
-    
-    ## Key Endpoints
-    - `/api/v1/query` - Submit questions and get AI responses
-    - `/api/v1/startups/profile` - Manage startup profiles
-    - `/api/v1/ecosystem/investors` - Access investor database
-    - `/api/v1/ecosystem/accelerators` - Find accelerators and incubators
-    
-    ## Authentication
-    Currently open access for demo purposes. Production would include API key authentication.
-    """,
-    version="1.0.0",
-    contact={
-        "name": "Kenya Startup Navigator Team",
-        "email": "contact@kenyastartupnav.com",
-    },
-    license_info={
-        "name": "MIT License",
-        "url": "https://opensource.org/licenses/MIT",
-    },
-    lifespan=lifespan,
-    # Custom documentation URLs for professional appearance
-    docs_url="/api/docs",
-    redoc_url="/api/redoc",
+    title="Kenya Startup Navigator API",
+    description="AI-powered guidance for Kenya's startup ecosystem",
+    version="1.0.0"
 )
 
-# CORS Middleware - Essential for frontend communication
+# CORS configuration for your frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins for Railway deployment
+    allow_origins=[
+        "https://kenya-startup-navigator-frontend-ruddy.vercel.app",
+        "http://localhost:3000",
+        "http://127.0.0.1:3000"
+    ],
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
 
-# Security middleware for production deployment - but allow all hosts for Railway
-if settings.ENVIRONMENT == "production":
-    # Railway uses dynamic subdomains, so we need to be more permissive
-    pass
-else:
-    app.add_middleware(
-        TrustedHostMiddleware, 
-        allowed_hosts=settings.ALLOWED_HOSTS
-    )
+# Request/Response models
+class QueryRequest(BaseModel):
+    question: str
+    startup_profile: Optional[dict] = None
+    context: Optional[str] = None
 
+class QueryResponse(BaseModel):
+    answer: str
+    confidence: float
+    processing_time: float
+    sources: List[str]
+    suggested_follow_ups: List[str]
+    timestamp: str
 
-# Global exception handler for professional error responses
-@app.exception_handler(HTTPException)
-async def http_exception_handler(request, exc: HTTPException):
-    """
-    Custom HTTP exception handler that returns user-friendly error messages
-    This makes your API feel professional and helps with debugging
-    """
-    return JSONResponse(
-        status_code=exc.status_code,
-        content={
-            "error": True,
-            "message": exc.detail,
-            "status_code": exc.status_code,
-            "timestamp": get_current_timestamp(),
-            "path": str(request.url.path)
-        }
-    )
+# System prompt for Kenya startup ecosystem
+SYSTEM_PROMPT = """You are KenyaStartup AI, an expert advisor on Kenya's startup ecosystem. You have comprehensive knowledge of Kenya's business landscape and provide practical, actionable advice.
 
+Your expertise includes:
+- Major VCs: TLcom Capital, Novastar Ventures, GreenTec Capital, 4DX Ventures
+- Accelerators: iHub, MEST Africa, Antler Kenya, Founder Institute
+- Government Programs: KIICO, Youth Enterprise Fund, Women Enterprise Fund
+- Regulatory: Central Bank of Kenya, Kenya Revenue Authority, Communications Authority
+- Co-working: iHub, NaiLab, GrowthHub Africa
 
-@app.exception_handler(Exception)
-async def general_exception_handler(request, exc: Exception):
-    """
-    Catch-all exception handler for unexpected errors
-    In production, you'd log these to monitoring services like Sentry
-    """
-    logger.error(f"Unexpected error: {str(exc)}", exc_info=True)
+Always provide:
+1. Specific, actionable advice for Kenya
+2. Relevant local contacts and resources
+3. Realistic timelines and costs
+4. Consider local business culture
+5. Include successful Kenyan startup examples
+
+Format responses clearly with practical next steps."""
+
+async def call_groq_api(messages: List[dict]) -> dict:
+    """Call Groq API with error handling"""
+    headers = {
+        "Authorization": f"Bearer {GROQ_API_KEY}",
+        "Content-Type": "application/json"
+    }
     
-    return JSONResponse(
-        status_code=500,
-        content={
-            "error": True,
-            "message": "An unexpected error occurred. Please try again later.",
-            "status_code": 500,
-            "timestamp": get_current_timestamp(),
-            "path": str(request.url.path)
+    payload = {
+        "model": GROQ_MODEL,
+        "messages": messages,
+        "max_tokens": 2048,
+        "temperature": 0.7
+    }
+    
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        try:
+            response = await client.post(
+                "https://api.groq.com/openai/v1/chat/completions",
+                headers=headers,
+                json=payload
+            )
+            
+            if response.status_code == 200:
+                return response.json()
+            else:
+                raise HTTPException(
+                    status_code=response.status_code,
+                    detail=f"Groq API error: {response.text}"
+                )
+                
+        except httpx.TimeoutException:
+            raise HTTPException(status_code=408, detail="Request timeout")
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"API call failed: {str(e)}")
+
+def calculate_confidence(content: str, question: str) -> float:
+    """Calculate confidence score based on response quality"""
+    if not content:
+        return 0.0
+    
+    score = 0.0
+    
+    # Length factor
+    score += min(len(content) / 1000, 1.0) * 0.3
+    
+    # Kenya-specific content
+    kenya_terms = ['kenya', 'kenyan', 'nairobi', 'kra', 'cbk', 'ihub', 'tlcom', 'shilling']
+    kenya_count = sum(1 for term in kenya_terms if term.lower() in content.lower())
+    score += min(kenya_count / 5, 1.0) * 0.4
+    
+    # Structure indicators
+    structure_count = content.count('##') + content.count('**') + content.count('- ')
+    score += min(structure_count / 6, 1.0) * 0.3
+    
+    return min(score, 1.0)
+
+def extract_sources(content: str) -> List[str]:
+    """Extract relevant sources from content"""
+    sources = []
+    potential_sources = [
+        "TLcom Capital", "Novastar Ventures", "GreenTec Capital",
+        "iHub", "MEST Africa", "Antler Kenya",
+        "Central Bank of Kenya", "Kenya Revenue Authority",
+        "Nairobi Angel Network"
+    ]
+    
+    for source in potential_sources:
+        if source.lower() in content.lower():
+            sources.append(source)
+    
+    if not sources:
+        sources.append("Kenya Startup Ecosystem Database")
+    
+    return sources[:3]
+
+def generate_follow_ups(question: str) -> List[str]:
+    """Generate relevant follow-up questions"""
+    question_lower = question.lower()
+    
+    if 'fund' in question_lower or 'invest' in question_lower:
+        return [
+            "What documents do I need for investor meetings?",
+            "How long does fundraising typically take in Kenya?",
+            "What valuation should I expect at my stage?"
+        ]
+    elif 'legal' in question_lower or 'register' in question_lower:
+        return [
+            "What are the ongoing compliance requirements?",
+            "How much should I budget for legal costs?",
+            "Which law firms specialize in startups?"
+        ]
+    elif 'accelerator' in question_lower or 'incubator' in question_lower:
+        return [
+            "What's the application process like?",
+            "How do I prepare for accelerator interviews?",
+            "What equity do accelerators typically take?"
+        ]
+    else:
+        return [
+            "How do I get started in Kenya's startup ecosystem?",
+            "What funding options are available for early-stage startups?",
+            "Which accelerators should I consider in Nairobi?"
+        ]
+
+@app.get("/")
+async def root():
+    """Root endpoint"""
+    return {
+        "message": "🚀 Kenya Startup Navigator API",
+        "status": "online",
+        "version": "1.0.0",
+        "endpoints": {
+            "query": "/api/v1/query",
+            "health": "/health",
+            "docs": "/docs"
         }
-    )
+    }
 
-
-# Health check endpoint - essential for deployment platforms
-@app.get("/health", tags=["System"])
+@app.get("/health")
 async def health_check():
-    """
-    Health check endpoint for monitoring and deployment platforms
-    Returns basic system status and configuration info
-    """
+    """Health check endpoint"""
     return {
         "status": "healthy",
         "service": "Kenya Startup Navigator API",
-        "version": "1.0.0",
-        "environment": settings.ENVIRONMENT,
-        "timestamp": get_current_timestamp(),
-        "features": {
-            "ai_integration": True,
-            "ecosystem_database": True,
-            "investor_matching": True,
-            "startup_profiling": True
-        }
+        "ai_service": "Groq LLaMA 3",
+        "timestamp": time.time()
     }
 
+@app.post("/api/v1/query", response_model=QueryResponse)
+async def process_query(request: QueryRequest):
+    """Process AI query about Kenya's startup ecosystem"""
+    try:
+        start_time = time.time()
+        
+        # Validate input
+        if not request.question or len(request.question.strip()) < 5:
+            raise HTTPException(status_code=400, detail="Question too short")
+        
+        if len(request.question) > 2000:
+            raise HTTPException(status_code=400, detail="Question too long")
+        
+        # Build context-aware prompt
+        user_prompt = f"Question: {request.question}"
+        
+        if request.startup_profile:
+            profile_info = []
+            for key, value in request.startup_profile.items():
+                if value:
+                    profile_info.append(f"{key}: {value}")
+            if profile_info:
+                user_prompt += f"\n\nStartup Profile:\n" + "\n".join(profile_info)
+        
+        if request.context:
+            user_prompt += f"\n\nAdditional Context: {request.context}"
+        
+        # Prepare messages for Groq
+        messages = [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": user_prompt}
+        ]
+        
+        # Call Groq API
+        response_data = await call_groq_api(messages)
+        
+        # Extract content
+        content = ""
+        if "choices" in response_data and response_data["choices"]:
+            choice = response_data["choices"][0]
+            if "message" in choice and "content" in choice["message"]:
+                content = choice["message"]["content"]
+        
+        if not content:
+            raise HTTPException(status_code=500, detail="Empty response from AI")
+        
+        # Calculate metrics
+        processing_time = time.time() - start_time
+        confidence = calculate_confidence(content, request.question)
+        sources = extract_sources(content)
+        follow_ups = generate_follow_ups(request.question)
+        
+        # Return response
+        return QueryResponse(
+            answer=content,
+            confidence=confidence,
+            processing_time=processing_time,
+            sources=sources,
+            suggested_follow_ups=follow_ups,
+            timestamp=str(int(time.time()))
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Processing error: {str(e)}")
 
-# Root endpoint with API information
-@app.get("/", tags=["System"])
-async def root():
-    """
-    Root endpoint providing API overview and navigation links
-    """
-    return {
-        "message": "🚀 Welcome to Kenya Startup Ecosystem Navigator API",
-        "description": "AI-powered guidance for Kenya's startup ecosystem",
-        "version": "1.0.0",
-        "documentation": {
-            "swagger_ui": "/api/docs",
-            "redoc": "/api/redoc"
-        },
-        "endpoints": {
-            "health_check": "/health",
-            "api_base": "/api/v1",
-            "query_ai": "/api/v1/query",
-            "ecosystem": "/api/v1/ecosystem"
-        },
-        "github": "https://github.com/yourusername/kenya-startup-navigator",
-        "timestamp": get_current_timestamp()
-    }
-
-
-# Include API routes with version prefix
-app.include_router(
-    api_router, 
-    prefix="/api/v1", 
-    tags=["API v1"]
-)
-
-
-# Development server configuration
 if __name__ == "__main__":
-    # For Railway, use the PORT environment variable
-    port = int(os.environ.get("PORT", 8000))
-    uvicorn.run(
-        "app.main:app",
-        host="0.0.0.0",
-        port=port,
-        reload=settings.DEBUG,  # Auto-reload in development
-        log_level="info"
-    )
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
