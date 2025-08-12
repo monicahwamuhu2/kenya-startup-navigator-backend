@@ -1,4 +1,5 @@
-from fastapi import FastAPI, HTTPException, Depends
+import os
+from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
@@ -12,7 +13,10 @@ from app.core.config import settings
 from app.core.dependencies import get_current_timestamp
 
 # Configure logging for production-ready error tracking
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
 
 
@@ -26,6 +30,7 @@ async def lifespan(app: FastAPI):
     logger.info("🚀 Kenya Startup Navigator API starting up...")
     logger.info(f"Environment: {settings.ENVIRONMENT}")
     logger.info(f"Debug mode: {settings.DEBUG}")
+    logger.info(f"Port: {os.getenv('PORT', '8000')}")
     
     yield  # Application runs here
     
@@ -37,7 +42,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Kenya Startup Ecosystem Navigator API",
     description="""
-    🚀 **Intelligent Q&A System for Kenya's Startup Ecosystem**
+    **Intelligent Q&A System for Kenya's Startup Ecosystem**
     
     This API provides AI-powered insights and guidance for entrepreneurs navigating
     Kenya's startup landscape. Features include:
@@ -72,9 +77,10 @@ app = FastAPI(
 )
 
 # CORS Middleware - Essential for frontend communication
+# More permissive for demo, restrict in production
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.ALLOWED_ORIGINS,  # Configure based on environment
+    allow_origins=["*"],  # Allow all origins for demo
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
@@ -83,7 +89,7 @@ app.add_middleware(
 # Security middleware for production deployment
 app.add_middleware(
     TrustedHostMiddleware, 
-    allowed_hosts=settings.ALLOWED_HOSTS
+    allowed_hosts=["*"]  # Allow all hosts for demo
 )
 
 
@@ -126,26 +132,38 @@ async def general_exception_handler(request, exc: Exception):
     )
 
 
-# Health check endpoint - essential for deployment platforms
+# Health check endpoint - essential for Railway deployment
 @app.get("/health", tags=["System"])
 async def health_check():
     """
     Health check endpoint for monitoring and deployment platforms
     Returns basic system status and configuration info
     """
-    return {
-        "status": "healthy",
-        "service": "Kenya Startup Navigator API",
-        "version": "1.0.0",
-        "environment": settings.ENVIRONMENT,
-        "timestamp": get_current_timestamp(),
-        "features": {
-            "ai_integration": True,
-            "ecosystem_database": True,
-            "investor_matching": True,
-            "startup_profiling": True
+    try:
+        return {
+            "status": "healthy",
+            "service": "Kenya Startup Navigator API",
+            "version": "1.0.0",
+            "environment": settings.ENVIRONMENT,
+            "timestamp": get_current_timestamp(),
+            "port": os.getenv('PORT', '8000'),
+            "features": {
+                "ai_integration": True,
+                "ecosystem_database": True,
+                "investor_matching": True,
+                "startup_profiling": True
+            }
         }
-    }
+    except Exception as e:
+        logger.error(f"Health check failed: {str(e)}")
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "unhealthy",
+                "error": str(e),
+                "timestamp": get_current_timestamp()
+            }
+        )
 
 
 # Root endpoint with API information
@@ -158,6 +176,7 @@ async def root():
         "message": "🚀 Welcome to Kenya Startup Ecosystem Navigator API",
         "description": "AI-powered guidance for Kenya's startup ecosystem",
         "version": "1.0.0",
+        "status": "online",
         "documentation": {
             "swagger_ui": "/api/docs",
             "redoc": "/api/redoc"
@@ -168,7 +187,6 @@ async def root():
             "query_ai": "/api/v1/query",
             "ecosystem": "/api/v1/ecosystem"
         },
-        "github": "https://github.com/yourusername/kenya-startup-navigator",
         "timestamp": get_current_timestamp()
     }
 
@@ -181,14 +199,15 @@ app.include_router(
 )
 
 
-# Development server configuration
+# Railway-compatible server startup
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 8000))  # Use Railway's port or fallback to 8000 locally
+    # Get port from environment (Railway sets this automatically)
+    port = int(os.getenv("PORT", 8000))
+    
     uvicorn.run(
-        "main:app",
+        "app.main:app",
         host="0.0.0.0",
         port=port,
-        reload=settings.DEBUG,  # Auto-reload in development
+        reload=False,  # Disable reload in production
         log_level="info"
     )
-    
